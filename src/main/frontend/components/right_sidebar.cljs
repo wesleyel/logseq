@@ -2,6 +2,7 @@
   (:require [cljs-bean.core :as bean]
             [clojure.string :as string]
             [frontend.components.block :as block]
+            [frontend.components.copilot-chat :as copilot-chat]
             [frontend.components.cmdk.core :as cmdk]
             [frontend.components.icon :as icon]
             [frontend.components.onboarding :as onboarding]
@@ -150,6 +151,15 @@
         :shortcut-settings
         [[:.flex.items-center (ui/icon "command" {:class "text-md mr-2"}) (t :help.shortcuts/label)]
          (shortcut-settings)]
+
+        :copilot/chat
+        [[:.flex.items-center.page-title
+          (ui/icon "message-circle" {:class "text-md mr-2"})
+          (t :copilot/chat-title)]
+         [:div {:style {:height "100%"
+                        :display "flex"
+                        :flex-direction "column"}}
+          (copilot-chat/copilot-chat-panel)]]
 
         :rtc
         [[:.flex.items-center (ui/icon "cloud" {:class "text-md mr-2"}) "(Dev) RTC"]
@@ -304,7 +314,7 @@
                   :class           (util/classnames [{:hidden  collapsed?
                                                       :initial (not collapsed?)
                                                       :sidebar-panel-content true
-                                                      :px-2    (not (contains? #{:search :shortcut-settings} block-type))}])}
+                                                     :px-2    (not (contains? #{:search :shortcut-settings :copilot/chat} block-type))}])}
             (inner-component component (not drag-from))]
            (when drag-from (drop-area idx))])]
        (drop-indicator idx drag-to)])))
@@ -489,6 +499,11 @@
                                                                         page
                                                                         :page-graph)))}
           (t :graph.page/title)]]
+
+        [:div.text-sm
+         [:button.button.cp__right-sidebar-settings-btn {:on-click (fn [_e]
+                                                                      (state/sidebar-add-block! repo "copilot-chat" :copilot/chat))}
+          (t :copilot/chat-title)]]
 
         [:div.text-sm
          [:button.button.cp__right-sidebar-settings-btn {:on-click (fn [_e]
