@@ -10,7 +10,7 @@
   (let [suggestion (rum/react (rum/cursor state/state :copilot/suggestion))]
     (when (and suggestion (= (:input-id suggestion) input-id))
       (when-let [^js input (js/document.getElementById input-id)]
-        (let [{:keys [left top]} (cursor/get-caret-pos input)]
+        (when-let [{:keys [left top]} (cursor/get-caret-pos input)]
           [:span.copilot-ghost-text
            {:style {:position "fixed"
                     :left (str left "px")
