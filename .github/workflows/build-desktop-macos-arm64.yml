@@ -1,0 +1,226 @@
+# macOS arm64 desktop build and release workflow
+name: Build-Desktop-macOS-arm64
+
+on:
+  workflow_dispatch:
+    inputs:
+      git-ref:
+        description: "Git ref to build (branch or tag)"
+        required: true
+        default: "master"
+      release-tag:
+        description: "Release tag name (e.g. v0.10.10), leave empty to skip release"
+        required: false
+        default: ""
+      is-draft:
+        description: "Create as draft release?"
+        type: boolean
+        required: true
+        default: true
+      is-pre-release:
+        description: "Mark as pre-release?"
+        type: boolean
+        required: true
+        default: true
+
+env:
+  CLOJURE_VERSION: '1.12.4.1618'
+  NODE_VERSION: '24'
+  JAVA_VERSION: '21'
+
+jobs:
+  compile-cljs:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.git-ref }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Get pnpm store directory path
+        id: pnpm-store-dir-path
+        run: echo "dir=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store directory
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store-dir-path.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Cache clojure deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: ${{ runner.os }}-clojure-lib-${{ hashFiles('**/deps.edn') }}
+
+      - name: Setup clojure
+        uses: DeLaGuardo/setup-clojure@13.5
+        with:
+          cli: ${{ env.CLOJURE_VERSION }}
+
+      - name: Compile CLJS
+        run: pnpm install --frozen-lockfile && gulp build && pnpm cljs:release-electron && pnpm db-worker-node:bundle && pnpm webpack-app-build && pnpm desktop:prepare-runtime-js
+
+      - name: Set version
+        id: ref
+        run: |
+          tag="${{ github.event.inputs.release-tag }}"
+          if [ -n "$tag" ]; then
+            pkgver="$tag"
+          else
+            pkgver=$(node ./scripts/get-pkg-version.js "non-release")
+          fi
+          echo "version=$pkgver" >> $GITHUB_OUTPUT
+
+      - name: Update APP version in package.json
+        run: |
+          sed -i 's/"version": "0.0.1"/"version": "${{ steps.ref.outputs.version }}"/g' ./package.json
+        working-directory: ./static
+
+      - name: Save VERSION file
+        run: echo "${{ steps.ref.outputs.version }}" > ./VERSION
+        working-directory: ./static
+
+      - name: Upload static artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: static
+          path: static
+          include-hidden-files: true
+
+  build-macos-arm64:
+    needs: [compile-cljs]
+    runs-on: macos-14
+    steps:
+      - name: Download static artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: static
+          path: static
+
+      - name: Retrieve version
+        id: ref
+        run: |
+          pkgver=$(cat ./static/VERSION)
+          echo "version=$pkgver" >> $GITHUB_OUTPUT
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Cache pnpm store directory
+        uses: actions/cache@v4
+        with:
+          path: $(pnpm store path --silent)
+          key: ${{ runner.os }}-arm64-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-pnpm-
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Signing By Apple Developer ID
+        if: ${{ github.repository == 'logseq/logseq' }}
+        uses: apple-actions/import-codesign-certs@v1
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATES_P12 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATES_P12_PASSWORD }}
+
+      - name: Install deps (arm64)
+        run: pnpm install --frozen-lockfile --config.supportedArchitectures.os=darwin --config.supportedArchitectures.cpu=arm64 && pnpm rebuild:all
+        working-directory: ./static
+
+      - name: Build Electron app (arm64)
+        run: pnpm electron:make-macos-arm64
+        working-directory: ./static
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID_EMAIL }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Save artifacts
+        run: |
+          mkdir -p builds
+          cp static/VERSION             ./builds/VERSION
+          mv static/dist/*.dmg          ./builds/Logseq-darwin-arm64-${{ steps.ref.outputs.version }}.dmg
+          mv static/dist/*.zip          ./builds/Logseq-darwin-arm64-${{ steps.ref.outputs.version }}.zip
+          shopt -s nullglob
+          blockmaps=(static/dist/*.blockmap)
+          if [ ${#blockmaps[@]} -gt 0 ]; then
+            mv static/dist/*.blockmap   ./builds/
+          fi
+          mv static/dist/latest-mac.yml ./builds/latest-arm64-mac.yml
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: logseq-darwin-arm64-builds
+          path: builds
+
+  release:
+    if: ${{ github.event.inputs.release-tag != '' }}
+    needs: [build-macos-arm64]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: logseq-darwin-arm64-builds
+          path: ./
+
+      - name: Retrieve version
+        id: ref
+        run: |
+          pkgver=$(cat VERSION)
+          echo "version=$pkgver" >> $GITHUB_OUTPUT
+
+      - name: Generate SHA256 checksums
+        run: |
+          sha256sum *-darwin-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.ref.outputs.version }}
+          name: "Desktop App ${{ steps.ref.outputs.version }} (macOS arm64)"
+          body: "macOS arm64 build of Logseq ${{ steps.ref.outputs.version }}"
+          draft: ${{ github.event.inputs.is-draft }}
+          prerelease: ${{ github.event.inputs.is-pre-release }}
+          files: |
+            ./VERSION
+            ./SHA256SUMS.txt
+            ./*.dmg
+            ./*.zip
+            ./*.yml
+            ./*.blockmap
