@@ -10,6 +10,7 @@
             [frontend.db :as db]
             [frontend.db.async :as db-async]
             [frontend.db.model :as db-model]
+            [frontend.extensions.copilot-ui :as copilot-ui]
             [frontend.handler.block :as block-handler]
             [frontend.handler.editor :as editor-handler :refer [get-state]]
             [frontend.handler.editor.lifecycle :as lifecycle]
@@ -781,6 +782,8 @@
 
      (ui/ls-textarea opts)
      (mock-textarea content)
+     (copilot-ui/ghost-text id)
+     (copilot-ui/copilot-hint)
      (command-popups id format)
 
      (when format

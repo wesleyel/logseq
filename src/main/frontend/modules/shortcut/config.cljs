@@ -303,7 +303,7 @@
    :go/search                               {:binding "mod+k"
                                              :fn      #(search :global)}
 
-   :go/search-themes                        {:binding (if mac? "mod+shift+i" "alt+shift+i")
+   :go/search-themes                        {:binding "alt+shift+i"
                                              :fn      #(search :themes)}
 
    :command-palette/toggle                  {:binding "mod+shift+p"
@@ -338,6 +338,11 @@
 
    :sidebar/open-today-page                 {:binding (if mac? "mod+shift+j" "alt+shift+j")
                                              :fn      page-handler/open-today-in-sidebar}
+
+   :sidebar/open-copilot-chat               {:binding "mod+shift+i"
+                                             :fn      #(do
+                                                         (state/open-right-sidebar!)
+                                                         (state/sidebar-add-block! (state/get-current-repo) "copilot-chat" :copilot/chat))}
 
    :sidebar/close-top                       {:binding "c t"
                                              :fn      #(state/sidebar-remove-block! 0)}
@@ -691,6 +696,7 @@
           :go/forward
           :search/re-index
           :sidebar/open-today-page
+          :sidebar/open-copilot-chat
           :sidebar/clear
           :shell/run
           :publish/open-dialog
@@ -893,6 +899,7 @@
      :sidebar/close-top
      :sidebar/clear
      :sidebar/open-today-page
+     :sidebar/open-copilot-chat
      :search/re-index
      :editor/insert-youtube-timestamp
      :editor/copy-page-url

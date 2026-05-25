@@ -16,6 +16,7 @@
             [frontend.db.utils :as db-utils]
             [frontend.diff :as diff]
             [frontend.extensions.pdf.utils :as pdf-utils]
+            [frontend.extensions.copilot :as copilot]
             [frontend.format.block :as block]
             [frontend.format.mldoc :as mldoc]
             [frontend.fs :as fs]
@@ -2787,23 +2788,29 @@
 (defn keydown-tab-handler
   [direction]
   (fn [e]
-    (cond
-      (pending-new-block?)
+    (if (copilot/get-suggestion)
       (do
         (util/stop e)
-        (queue-pending-new-block-tab! (not (= :left direction))))
-
-      (state/editing?)
-      (when-not (state/get-editor-action)
-        (util/stop e)
-        (indent-outdent (not (= :left direction))))
-
-      (state/selection?)
+        (copilot/accept-suggestion!)
+        nil)
       (do
-        (util/stop e)
-        (state/pub-event! [:editor/hide-action-bar])
-        (on-tab direction)))
-    nil))
+        (cond
+          (pending-new-block?)
+          (do
+            (util/stop e)
+            (queue-pending-new-block-tab! (not (= :left direction))))
+
+          (state/editing?)
+          (when-not (state/get-editor-action)
+            (util/stop e)
+            (indent-outdent (not (= :left direction))))
+
+          (state/selection?)
+          (do
+            (util/stop e)
+            (state/pub-event! [:editor/hide-action-bar])
+            (on-tab direction)))
+        nil))))
 
 (defn- double-chars-typed?
   [value pos key sym]
@@ -2825,6 +2832,7 @@
           value (gobj/get input "value")
           ctrlKey (gobj/get e "ctrlKey")
           metaKey (gobj/get e "metaKey")
+          shiftKey (gobj/get e "shiftKey")
           pos (cursor/pos input)
           hashtag? (or (surround-by? input "#" " ")
                        (surround-by? input "#" :end)
@@ -2853,6 +2861,15 @@
              (not hashtag?) ;; #3283 @Rime
              (not (state/get-editor-show-page-search-hashtag?))) ;; #3283 @MacOS pinyin
         nil
+
+        (and (or ctrlKey metaKey)
+             shiftKey
+             (string? key)
+             (= "I" (string/upper-case key)))
+        (do
+          (util/stop e)
+          (state/open-right-sidebar!)
+          (state/sidebar-add-block! (state/get-current-repo) "copilot-chat" :copilot/chat))
 
         (or ctrlKey metaKey)
         nil
@@ -3107,7 +3124,9 @@
         (let [input (gdom/getElement id)]
           (edit-box-on-change! e block id)
           (when-not editor-action
-            (util/scroll-editor-cursor input)))))))
+            (util/scroll-editor-cursor input)
+            (when (copilot/copilot-enabled?)
+              (copilot/trigger-completion! input))))))))
 
 (defn- cut-blocks-and-clear-selections!
   [copy?]
@@ -3742,6 +3761,7 @@
 (defn escape-editing
   [& {:keys [select? save-block? editing-another-block?]
       :or {save-block? true}}]
+  (copilot/clear-suggestion!)
   (p/do!
    (when save-block? (save-current-block!))
    (if select?

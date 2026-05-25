@@ -190,6 +190,7 @@
 
       :editor/code-block-context             nil
       :editor/latest-shortcut                (atom nil)
+      :copilot/suggestion                    nil
 
       :history/paused?                       (atom false)
       :editor/cursor-range                   (atom nil)
